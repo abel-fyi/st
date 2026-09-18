@@ -2392,6 +2392,12 @@ eschandle(uchar ascii)
 	return 1;
 }
 
+static int
+isemojicomponent(Rune u)
+{
+	return BETWEEN(u, 0x1f3fb, 0x1f3ff) || u == 0x200d || u == 0xfe0f;
+}
+
 void
 tputc(Rune u)
 {
@@ -2496,6 +2502,17 @@ check_control_code:
 		 * All characters which form part of a sequence are not
 		 * printed
 		 */
+		return;
+	}
+	if (BETWEEN(u, 0x1f3fb, 0x1f3ff))
+		width = 0;
+	if (width == 0 && isemojicomponent(u) && term.c.x > 0 &&
+	    term.line[term.c.y][term.c.x - 1].mode & ATTR_WDUMMY) {
+		if (selected(term.c.x - 1, term.c.y))
+			selclear();
+		term.line[term.c.y][term.c.x - 1].u = u;
+		term.dirty[term.c.y] = 1;
+		term.lastc = u;
 		return;
 	}
 	if (selected(term.c.x, term.c.y))
@@ -2694,7 +2711,8 @@ draw(void)
 
 	drawregion(0, 0, term.col, term.row);
 	xdrawcursor(cx, term.c.y, term.line[term.c.y][cx],
-			term.ocx, term.ocy, term.line[term.ocy][term.ocx]);
+			term.ocx, term.ocy, term.line[term.ocy][term.ocx],
+			term.line[term.ocy], term.col);
 	term.ocx = cx;
 	term.ocy = term.c.y;
 	xfinishdraw();
