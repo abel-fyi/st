@@ -35,6 +35,7 @@ typedef struct {
 	void (*func)(const Arg *);
 	const Arg arg;
 	uint  release;
+	int altscrn;
 } MouseShortcut;
 
 typedef struct {
@@ -224,6 +225,9 @@ static DC dc;
 static XWindow xw;
 static XSelection xsel;
 static TermWindow win;
+static int selectdrag, dragdir;
+static XEvent dragevent;
+static struct timespec draglast;
 
 /* Font Ring Cache */
 enum {
@@ -459,6 +463,7 @@ mouseaction(XEvent *e, uint release)
 	for (ms = mshortcuts; ms < mshortcuts + LEN(mshortcuts); ms++) {
 		if (ms->release == release &&
 		    ms->button == e->xbutton.button &&
+		    (!ms->altscrn || ms->altscrn == (tisaltscr() ? 1 : -1)) &&
 		    (match(ms->mod, state) ||  /* exact or forced */
 		     match(ms->mod, state & ~forcemousemod))) {
 			ms->func(&(ms->arg));
@@ -503,7 +508,12 @@ bpress(XEvent *e)
 		xsel.tclick2 = xsel.tclick1;
 		xsel.tclick1 = now;
 
-		selstart(evcol(e), evrow(e), snap);
+		if ((e->xbutton.state & ShiftMask) && selactive())
+			selextend(evcol(e), evrow(e), SEL_REGULAR, 0);
+		else
+			selstart(evcol(e), evrow(e), snap);
+		selectdrag = 1;
+		dragdir = 0;
 	}
 }
 
@@ -702,6 +712,10 @@ void
 brelease(XEvent *e)
 {
 	int btn = e->xbutton.button;
+	if (btn == Button1) {
+		selectdrag = 0;
+		dragdir = 0;
+	}
 
 	if (1 <= btn && btn <= 11)
 		buttons &= ~(1 << (btn-1));
@@ -725,6 +739,11 @@ bmotion(XEvent *e)
 		return;
 	}
 
+	if (selectdrag) {
+		dragevent = *e;
+		dragdir = e->xmotion.y < borderpx + win.ch ? -1 :
+		          e->xmotion.y >= win.h - borderpx - win.ch ? 1 : 0;
+	}
 	mousesel(e, 0);
 }
 
@@ -2033,6 +2052,15 @@ run(void)
 			die("select failed: %s\n", strerror(errno));
 		}
 		clock_gettime(CLOCK_MONOTONIC, &now);
+		if (selectdrag && dragdir && TIMEDIFF(now, draglast) >= 25) {
+			Arg step = { .i = 1 };
+			draglast = now;
+			if (dragdir < 0)
+				kscrollup(&step);
+			else
+				kscrolldown(&step);
+			mousesel(&dragevent, 0);
+		}
 
 		if (FD_ISSET(ttyfd, &rfd))
 			ttyread();
@@ -2071,16 +2099,19 @@ run(void)
 
 		/* idle detected or maxlatency exhausted -> draw */
 		timeout = -1;
+		if (selectdrag && dragdir)
+			timeout = 25;
 		if (blinktimeout && tattrset(ATTR_BLINK)) {
-			timeout = blinktimeout - TIMEDIFF(now, lastblink);
-			if (timeout <= 0) {
-				if (-timeout > blinktimeout) /* start visible */
+			double blinkleft = blinktimeout - TIMEDIFF(now, lastblink);
+			if (blinkleft <= 0) {
+				if (-blinkleft > blinktimeout) /* start visible */
 					win.mode |= MODE_BLINK;
 				win.mode ^= MODE_BLINK;
 				tsetdirtattr(ATTR_BLINK);
 				lastblink = now;
-				timeout = blinktimeout;
+				blinkleft = blinktimeout;
 			}
+			timeout = timeout < 0 ? blinkleft : MIN(timeout, blinkleft);
 		}
 
 		draw();

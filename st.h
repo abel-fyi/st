@@ -80,8 +80,12 @@ typedef union {
 
 void die(const char *, ...);
 void redraw(void);
+int selactive(void);
 void draw(void);
 
+void kscrolldown(const Arg *);
+void kscrollup(const Arg *);
+int tisaltscr(void);
 void printscreen(const Arg *);
 void printsel(const Arg *);
 void sendbreak(const Arg *);
